@@ -13,8 +13,7 @@ node_modules/
 
 # Ignore data files
 *.json
-*.jpg
-*.png
+
 
 # Ignore IDE specific files
 .vscode/

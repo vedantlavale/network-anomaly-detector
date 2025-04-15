@@ -1,3 +1,4 @@
+<<<<<<< HEAD
 # Network Anomaly Detector
 
 ## Overview
@@ -45,3 +46,6 @@ Contributions are welcome! Please fork the repository and submit a pull request.
 
 ## License
 This project is licensed under the MIT License.
+=======
+# network-anomaly-detector
+>>>>>>> 3fd8a1e87513d93a67c9841f9717f8214a84acd5
