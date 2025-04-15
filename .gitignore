@@ -1,0 +1,41 @@
+# Ignore Python bytecode files
+*.pyc
+__pycache__/
+
+# Ignore log files
+*.log
+
+# Ignore node_modules
+node_modules/
+
+# Ignore environment files
+.env
+
+# Ignore data files
+*.json
+*.jpg
+*.png
+
+# Ignore IDE specific files
+.vscode/
+*.code-workspace
+
+# Ignore OS generated files
+.DS_Store
+Thumbs.db
+
+# Ignore compiled files
+*.pyc
+*.pyo
+*.exe
+*.dll
+*.so
+*.dylib
+
+# Ignore temporary files
+*.tmp
+*.bak
+*.swp
+*.swo
+*.swn
+*.swn~

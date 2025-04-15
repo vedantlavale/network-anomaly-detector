@@ -1,0 +1,550 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Network Anomaly Detector</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/4.6.1/socket.io.js"></script>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/5.15.4/css/all.min.css">
+</head>
+<body>
+    <div class="container">
+        <header>
+            <h1>🔍 Network Anomaly Detector</h1>
+            <p class="subtitle">Analyze web applications for network anomalies and security issues</p>
+        </header>
+
+        <div class="input-section">
+            <form id="analyzeForm">
+                <div class="input-group">
+                    <input type="url" id="urlInput" placeholder="Enter URL (e.g., https://example.com)" required>
+                    <button type="submit">Analyze</button>
+                </div>
+                <div class="options">
+                    <label><input type="checkbox" id="deepScan"> Deep scan</label>
+                    <label><input type="checkbox" id="includeThirdParty" checked> Include third-party requests</label>
+                </div>
+            </form>
+        </div>
+
+        <div id="results" class="hidden">
+            <div class="tabs">
+                <button class="tab-btn active" data-tab="summary">Summary</button>
+                <button class="tab-btn" data-tab="anomalies">Anomalies</button>
+                <button class="tab-btn" data-tab="requests">All Requests</button>
+                <button class="tab-btn" data-tab="charts">Charts</button>
+            </div>
+
+            <div id="loading" class="loader"></div>
+
+            <div class="tab-content active" id="summary-tab">
+                <div class="summary-stats">
+                    <div class="stat-card">
+                        <span class="stat-value" id="totalRequests">-</span>
+                        <span class="stat-label">Total Requests</span>
+                    </div>
+                    <div class="stat-card">
+                        <span class="stat-value" id="anomalyCount">-</span>
+                        <span class="stat-label">Anomalies</span>
+                    </div>
+                    <div class="stat-card">
+                        <span class="stat-value" id="errorCount">-</span>
+                        <span class="stat-label">Errors</span>
+                    </div>
+                </div>
+                <div id="summary-text"></div>
+                <div class="card mt-3">
+                    <div class="card-header">
+                        <h5>Website Screenshot</h5>
+                    </div>
+                    <div class="card-body text-center">
+                        <img id="websiteScreenshot" class="img-fluid" alt="Website Screenshot" 
+                             style="max-width: 60%; border: 1px solid #ddd; display: block; margin: 0 auto; box-shadow: 0 2px 5px rgba(0,0,0,0.1); border-radius: 4px;">
+                    </div>
+                </div>
+            </div>
+
+            <div class="tab-content" id="anomalies-tab">
+                <table id="anomaliesTable" class="data-table">
+                    <thead>
+                        <tr>
+                            <th>URL</th>
+                            <th>Method</th>
+                            <th>Status</th>
+                            <th>Type</th>
+                            <th>Description</th>
+                            <th>Severity</th>
+                        </tr>
+                    </thead>
+                    <tbody></tbody>
+                </table>
+            </div>
+
+            <div class="tab-content" id="requests-tab">
+                <div class="filters">
+                    <input type="text" id="requestFilter" placeholder="Filter requests...">
+                    <select id="resourceTypeFilter">
+                        <option value="">All types</option>
+                    </select>
+                </div>
+                <table id="requestsTable" class="data-table">
+                    <thead>
+                        <tr>
+                            <th>URL</th>
+                            <th>Type</th>
+                            <th>Status</th>
+                            <th>Size</th>
+                            <th>Time</th>
+                        </tr>
+                    </thead>
+                    <tbody></tbody>
+                </table>
+            </div>
+
+            <div class="tab-content" id="charts-tab">
+                <div class="chart-container">
+                    <canvas id="resourceTypeChart"></canvas>
+                </div>
+                <div class="chart-container">
+                    <canvas id="statusCodeChart"></canvas>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // Initialize Socket.IO
+        let socket;
+        try {
+            socket = io.connect();
+            
+            socket.on('connect', function() {
+                console.log('Socket.IO connected');
+            });
+            
+            socket.on('analysis_progress', function(data) {
+                console.log('Progress update:', data);
+                // Handle progress updates
+            });
+            
+            socket.on('connect_error', function(error) {
+                console.error('Socket connection error:', error);
+            });
+        } catch (error) {
+            console.error('Socket initialization error:', error);
+        }
+        
+        // Add global error handler
+        window.addEventListener('error', function(event) {
+            console.error('Global error caught:', event.error);
+        });
+
+        // Helper function for safe chart creation
+        function safeCreateChart(canvasId, config) {
+            // Destroy existing chart if it exists
+            const chartInstance = Chart.getChart(canvasId);
+            if (chartInstance) {
+                chartInstance.destroy();
+            }
+            
+            // Create new chart
+            return new Chart(
+                document.getElementById(canvasId),
+                config
+            );
+        }
+        
+        // URL truncation helper
+        function truncateUrl(url, maxLength = 50) {
+            if (url.length <= maxLength) return url;
+            return url.substring(0, maxLength) + '...';
+        }
+        
+        // Create resource type chart
+        function createResourceTypeChart(data) {
+            // Extract resource types and count them
+            const resourceTypes = {};
+            data.all_requests.forEach(req => {
+                const type = req.resource_type || 'unknown';
+                resourceTypes[type] = (resourceTypes[type] || 0) + 1;
+            });
+            
+            // Use safeCreateChart instead of direct Chart creation
+            safeCreateChart('resourceTypeChart', {
+                type: 'doughnut',
+                data: {
+                    labels: Object.keys(resourceTypes),
+                    datasets: [{
+                        data: Object.values(resourceTypes),
+                        backgroundColor: [
+                            '#FF6384', '#36A2EB', '#FFCE56', '#4BC0C0', 
+                            '#9966FF', '#FF9F40', '#8BC34A', '#607D8B'
+                        ]
+                    }]
+                },
+                options: {
+                    responsive: true,
+                    plugins: {
+                        title: {
+                            display: true,
+                            text: 'Resource Types'
+                        }
+                    }
+                }
+            });
+        }
+        
+        // Create status code chart
+        function createStatusCodeChart(data) {
+            // First, check if we have data
+            if (!data || !data.anomaly_types) {
+                console.error('No anomaly types data available for chart');
+                return;
+            }
+            
+            // Get anomaly type counts
+            const anomalyTypes = data.anomaly_types;
+            
+            // Create labels and data arrays
+            const labels = [];
+            const values = [];
+            const colors = [
+                '#F44336', // Red - client error
+                '#FF5722', // Deep Orange - server error
+                '#FFC107', // Amber - slow request
+                '#2196F3', // Blue - security headers
+                '#9C27B0', // Purple - mixed content 
+                '#795548', // Brown - connection error
+                '#607D8B', // Blue Grey - large response
+                '#FF9800', // Orange - outdated TLS
+                '#4CAF50'  // Green - statistical outlier
+            ];
+            
+            // Add each anomaly type with count > 0
+            if (anomalyTypes.client_error > 0) {
+                labels.push('Client Errors');
+                values.push(anomalyTypes.client_error);
+            }
+            if (anomalyTypes.server_error > 0) {
+                labels.push('Server Errors');
+                values.push(anomalyTypes.server_error);
+            }
+            if ((anomalyTypes.slow_request || 0) > 0) {
+                labels.push('Slow Responses');
+                values.push(anomalyTypes.slow_request);
+            }
+            if ((anomalyTypes.security_headers || 0) > 0) {
+                labels.push('Security Headers');
+                values.push(anomalyTypes.security_headers);
+            }
+            if ((anomalyTypes.mixed_content || 0) > 0) {
+                labels.push('Mixed Content');
+                values.push(anomalyTypes.mixed_content);
+            }
+            if ((anomalyTypes.connection_error || 0) > 0) {
+                labels.push('Connection Errors');
+                values.push(anomalyTypes.connection_error);
+            }
+            if ((anomalyTypes.large_response || 0) > 0) {
+                labels.push('Large Responses');
+                values.push(anomalyTypes.large_response);
+            }
+            if ((anomalyTypes.outdated_tls || 0) > 0) {
+                labels.push('Outdated TLS');
+                values.push(anomalyTypes.outdated_tls);
+            }
+            if ((anomalyTypes.statistical_outlier || 0) > 0) {
+                labels.push('Statistical Outliers');
+                values.push(anomalyTypes.statistical_outlier);
+            }
+            
+            // If no data, add placeholder
+            if (labels.length === 0) {
+                labels.push('No anomalies');
+                values.push(0);
+            }
+            
+            // Use safeCreateChart to create the chart
+            safeCreateChart('statusCodeChart', {
+                type: 'bar',
+                data: {
+                    labels: labels,
+                    datasets: [{
+                        label: 'Anomaly Types',
+                        data: values,
+                        backgroundColor: colors.slice(0, labels.length)
+                    }]
+                },
+                options: {
+                    responsive: true,
+                    plugins: {
+                        title: {
+                            display: true,
+                            text: 'Anomaly Distribution'
+                        },
+                        legend: {
+                            display: false
+                        }
+                    },
+                    scales: {
+                        y: {
+                            beginAtZero: true,
+                            ticks: {
+                                precision: 0
+                            }
+                        }
+                    }
+                }
+            });
+        }
+
+        // Set up form submission handler when document is loaded
+        document.addEventListener('DOMContentLoaded', function() {
+            console.log('DOM loaded, attaching event listeners');
+            const analyzeForm = document.getElementById('analyzeForm');
+            
+            if (!analyzeForm) {
+                console.error('Form not found!');
+                return;
+            }
+            
+            // Tab switching logic
+            document.querySelectorAll('.tab-btn').forEach(button => {
+                button.addEventListener('click', () => {
+                    // Update active tab button
+                    document.querySelectorAll('.tab-btn').forEach(btn => btn.classList.remove('active'));
+                    button.classList.add('active');
+                    
+                    // Show selected tab content
+                    document.querySelectorAll('.tab-content').forEach(tab => tab.classList.remove('active'));
+                    document.getElementById(`${button.dataset.tab}-tab`).classList.add('active');
+                });
+            });
+            
+            // Form submission handler
+            analyzeForm.addEventListener('submit', function(e) {
+                console.log('Form submitted');
+                e.preventDefault(); // Important! Prevent default form submission
+                
+                const url = document.getElementById('urlInput').value;
+                const deepScan = document.getElementById('deepScan').checked;
+                const includeThirdParty = document.getElementById('includeThirdParty').checked;
+                
+                const resultsDiv = document.getElementById('results');
+                const summaryText = document.getElementById('summary-text');
+                
+                resultsDiv.classList.remove('hidden');
+                document.querySelectorAll('.tab-content').forEach(tab => tab.classList.remove('active'));
+                document.getElementById('summary-tab').classList.add('active');
+                document.querySelectorAll('.tab-btn').forEach(btn => btn.classList.remove('active'));
+                document.querySelector('[data-tab="summary"]').classList.add('active');
+                
+                document.getElementById('loading').classList.remove('hidden');
+                
+                // Send POST request to backend
+                fetch('/analyze', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ 
+                        url, 
+                        deepScan,
+                        includeThirdParty
+                    })
+                })
+                .then(response => {
+                    if (!response.ok) {
+                        throw new Error(`HTTP error ${response.status}`);
+                    }
+                    return response.json();
+                })
+                .then(data => {
+                    if (data.error) {
+                        summaryText.innerHTML = `<div class="error-message">Error: ${data.error}</div>`;
+                        return;
+                    }
+                    
+                    // Update summary stats
+                    document.getElementById('totalRequests').textContent = data.total_requests;
+                    document.getElementById('anomalyCount').textContent = data.anomalies_found;
+                    document.getElementById('errorCount').textContent = 
+                        (data.anomaly_types.client_error || 0) + (data.anomaly_types.server_error || 0);
+                    
+                    // Generate summary text
+                    let safetyClass = 'text-success';
+                    if (data.safety_assessment.rating === 'Potentially Unsafe') {
+                        safetyClass = 'text-danger';
+                    } else if (data.safety_assessment.rating === 'Moderate Risk' || data.safety_assessment.rating === 'Needs Review') {
+                        safetyClass = 'text-warning';
+                    }
+
+                    summaryText.innerHTML = `
+                        <h3>Analysis Complete</h3>
+                        <p>We analyzed ${data.total_requests} network requests from <strong>${data.url}</strong>.</p>
+                        <p>Found ${data.anomalies_found} potential anomalies.</p>
+                        
+                        <div class="card mt-3">
+                            <div class="card-header">
+                                <h5>Safety Assessment</h5>
+                            </div>
+                            <div class="card-body">
+                                <h4 class="${safetyClass}"><i class="fas ${data.safety_assessment.rating === 'Safe' ? 'fa-shield-check' : 'fa-shield-exclamation'}"></i> ${data.safety_assessment.rating}</h4>
+                                
+                                ${data.safety_assessment.issues.length > 0 ? `
+                                    <h6 class="mt-3">Issues Identified:</h6>
+                                    <ul>
+                                        ${data.safety_assessment.issues.map(issue => `<li>${issue}</li>`).join('')}
+                                    </ul>
+                                ` : ''}
+                                
+                                ${data.safety_assessment.recommendations.length > 0 ? `
+                                    <h6 class="mt-3">Recommendations:</h6>
+                                    <ul>
+                                        ${data.safety_assessment.recommendations.map(rec => `<li>${rec}</li>`).join('')}
+                                    </ul>
+                                ` : ''}
+                                
+                                ${data.safety_assessment.rating === 'Safe' ? `
+                                    <p class="mt-3">No significant security issues were detected during the network analysis.</p>
+                                ` : ''}
+                            </div>
+                        </div>
+                    `;
+
+                    // Update the screenshot
+                    const screenshotImg = document.getElementById('websiteScreenshot');
+                    screenshotImg.src = `/api/screenshot/${data.id}?t=${Date.now()}`; // Add timestamp to prevent caching
+                    
+                    // Populate anomalies table
+                    const anomaliesTable = document.querySelector('#anomaliesTable tbody');
+                    anomaliesTable.innerHTML = '';
+                    data.anomalies.forEach(anomaly => {
+                        const row = document.createElement('tr');
+                        
+                        // Get the anomaly type and description
+                        const anomalyType = anomaly.anomaly_type || 'unknown';
+                        const description = anomaly.description || 'No details available';
+                        const severity = anomaly.severity || 'medium';
+                        
+                        // Create a more readable display name for the anomaly type
+                        let displayType = 'Unknown';
+                        
+                        switch(anomalyType) {
+                            case 'bad_request':
+                                displayType = 'Bad Request (400)';
+                                break;
+                            case 'unauthorized':
+                                displayType = 'Unauthorized (401)';
+                                break;
+                            case 'forbidden':
+                                displayType = 'Forbidden (403)';
+                                break;
+                            case 'not_found':
+                                displayType = 'Not Found (404)';
+                                break;
+                            case 'method_not_allowed':
+                                displayType = 'Method Not Allowed (405)';
+                                break;
+                            case 'rate_limited':
+                                displayType = 'Rate Limited (429)';
+                                break;
+                            case 'client_error':
+                                displayType = 'Client Error (4xx)';
+                                break;
+                            case 'server_error':
+                                displayType = 'Server Error (5xx)';
+                                break;
+                            case 'slow_request':
+                                displayType = 'Slow Response';
+                                break;
+                            case 'very_slow_request':
+                                displayType = 'Very Slow Response';
+                                break;
+                            case 'security_headers':
+                                displayType = 'Missing Security Headers';
+                                break;
+                            case 'mixed_content':
+                                displayType = 'Mixed Content (HTTP on HTTPS)';
+                                break;
+                            case 'connection_error':
+                                displayType = 'Connection Error';
+                                break;
+                            case 'large_response':
+                                displayType = 'Large Response';
+                                break;
+                            case 'outdated_tls':
+                                displayType = 'Outdated TLS';
+                                break;
+                            case 'statistical_outlier':
+                                displayType = 'Statistical Outlier';
+                                break;
+                        }
+                        
+                        row.innerHTML = `
+                            <td title="${anomaly.url}">${truncateUrl(anomaly.url, 30)}</td>
+                            <td>${anomaly.method || 'N/A'}</td>
+                            <td>${anomaly.status_code || 'N/A'}</td>
+                            <td>${displayType}</td>
+                            <td>${description}</td>
+                            <td class="severity-${severity}">${severity}</td>
+                        `;
+                        
+                        anomaliesTable.appendChild(row);
+                    });
+                    
+                    // Populate requests table
+                    const requestsTable = document.querySelector('#requestsTable tbody');
+                    requestsTable.innerHTML = '';
+                    
+                    // Get unique resource types for filter
+                    const resourceTypeFilter = document.getElementById('resourceTypeFilter');
+                    resourceTypeFilter.innerHTML = '<option value="">All types</option>';
+                    const resourceTypes = new Set();
+                    
+                    data.all_requests.forEach(req => {
+                        const type = req.resource_type || 'unknown';
+                        resourceTypes.add(type);
+                        
+                        const row = document.createElement('tr');
+                        row.innerHTML = `
+                            <td title="${req.url}">${truncateUrl(req.url)}</td>
+                            <td>${type}</td>
+                            <td>${req.status_code || 'N/A'}</td>
+                            <td>${req.content_length || 'N/A'}</td>
+                            <td>${req.duration || req.response_time || 'N/A'}ms</td>
+                        `;
+                        requestsTable.appendChild(row);
+                    });
+                    
+                    // Add resource types to filter
+                    resourceTypes.forEach(type => {
+                        const option = document.createElement('option');
+                        option.value = type;
+                        option.textContent = type;
+                        resourceTypeFilter.appendChild(option);
+                    });
+                    
+                    // Create charts with error handling
+                    try {
+                        console.log('Creating resource type chart');
+                        createResourceTypeChart(data);
+                        console.log('Creating status code chart');
+                        createStatusCodeChart(data);
+                    } catch (chartError) {
+                        console.error('Error creating charts:', chartError);
+                        summaryText.innerHTML += `<div class="warning-message">Charts could not be displayed: ${chartError.message}</div>`;
+                    }
+                })
+                .catch(error => {
+                    console.error('Error during analysis:', error);
+                    summaryText.innerHTML = `<div class="error-message">Error: ${error.message}</div>`;
+                })
+                .finally(() => {
+                    document.getElementById('loading').classList.add('hidden');
+                });
+            });
+        });
+    </script>
+</body>
+</html>
