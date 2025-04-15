@@ -1,4 +1,3 @@
-<<<<<<< HEAD
 # Network Anomaly Detector
 
 ## Overview
@@ -20,7 +19,7 @@ Below are some screenshots of the frontend:
 ## Installation
 1. Clone the repository:
    ```bash
-   git clone <repository-url>
+   git clone https://github.com/vedantlavale/network-anomaly-detector.git
    ```
 2. Navigate to the project directory:
    ```bash
@@ -46,6 +45,4 @@ Contributions are welcome! Please fork the repository and submit a pull request.
 
 ## License
 This project is licensed under the MIT License.
-=======
 # network-anomaly-detector
->>>>>>> 3fd8a1e87513d93a67c9841f9717f8214a84acd5
